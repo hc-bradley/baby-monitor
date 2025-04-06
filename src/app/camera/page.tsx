@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { io, Socket } from 'socket.io-client'
 import Link from 'next/link'
+import type { Socket } from 'socket.io-client'
 
 export default function CameraPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -21,13 +21,14 @@ export default function CameraPage() {
   useEffect(() => {
     let socket: Socket | null = null;
 
-    const initSocket = () => {
+    const initSocket = async () => {
       try {
         if (typeof window === 'undefined') return;
 
         const socketUrl = window.location.origin;
         console.log('Connecting to socket server at:', socketUrl);
 
+        const io = (await import('socket.io-client')).io;
         socket = io(socketUrl, {
           path: '/api/socket',
           addTrailingSlash: false,
