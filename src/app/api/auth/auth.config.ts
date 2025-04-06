@@ -6,26 +6,50 @@ import bcrypt from 'bcrypt'
 import { v4 as uuidv4 } from 'uuid'
 import Redis from 'ioredis'
 
-// Initialize Redis client
-// Ensure REDIS_URL is set in your environment variables (.env.local for development)
-const redisUrl = process.env.REDIS_URL
-if (!redisUrl) {
-  console.error('REDIS_URL environment variable is not set.')
-  // In a real app, you might throw an error or handle this more gracefully
-  // For now, we log and potentially let it fail later if Redis is required.
-}
-const redis = redisUrl ? new Redis(redisUrl) : null
+// Initialize Redis client with better error handling
+let redis: Redis | null = null
 
-console.log(redis ? 'Redis client initialized.' : 'Redis client initialization failed: REDIS_URL not found.')
+try {
+  const redisUrl = process.env.REDIS_URL
+  if (!redisUrl) {
+    console.error('REDIS_URL environment variable is not set.')
+    throw new Error('REDIS_URL is required for authentication')
+  }
 
-if (redis) {
-  console.log('Redis client initialized.')
-  redis.on('error', (err) => console.error('Redis Client Error', err))
-  redis.on('connect', () => console.log('Redis connected.'))
-  redis.on('reconnecting', () => console.log('Redis reconnecting.'))
-  redis.on('end', () => console.log('Redis connection ended.'))
-} else {
-  console.error('Redis client initialization failed: REDIS_URL not found.')
+  redis = new Redis(redisUrl, {
+    retryStrategy: (times) => {
+      const delay = Math.min(times * 50, 2000)
+      return delay
+    },
+    maxRetriesPerRequest: 3,
+    enableReadyCheck: true,
+    connectTimeout: 10000
+  })
+
+  redis.on('error', (err) => {
+    console.error('Redis Client Error:', err)
+    // Don't throw here, just log the error
+  })
+
+  redis.on('connect', () => {
+    console.log('Redis connected successfully')
+  })
+
+  redis.on('ready', () => {
+    console.log('Redis client is ready')
+  })
+
+  redis.on('reconnecting', () => {
+    console.log('Redis reconnecting...')
+  })
+
+  redis.on('end', () => {
+    console.log('Redis connection ended')
+  })
+
+} catch (error) {
+  console.error('Failed to initialize Redis client:', error)
+  // Don't throw here, we'll handle Redis unavailability in the auth flow
 }
 
 // Define the structure for user data stored in Redis
@@ -109,78 +133,80 @@ if (!process.env.NEXTAUTH_SECRET) {
   // In a real app, you might throw an error or handle this more gracefully
 }
 
-export const authOptions: AuthOptions = {
-  pages: {
-    signIn: '/auth/signin',
-  },
+export const authConfig: AuthOptions = {
   providers: [
     Credentials({
-      // Define the fields expected in the credentials object
+      name: 'credentials',
       credentials: {
-        username: { label: "Username", type: "text", placeholder: "jsmith" },
+        username: { label: "Username", type: "text" },
         password: { label: "Password", type: "password" }
       },
       async authorize(credentials) {
-        if (!redis) {
-          console.error('Redis client not available during authorization')
-          return null
-        }
-        const username = credentials?.username
-        const password = credentials?.password
-
-        if (!username || !password) {
-          console.log('Authorize failed: Missing username or password')
-          return null
-        }
-
-        console.log(`Attempting authorization for user: ${username}`)
-        const user = await getUserByUsername(username)
-
-        if (!user) {
-          console.log(`Authorization failed: User not found - ${username}`)
-          return null
-        }
-
-        const passwordsMatch = await bcrypt.compare(
-          password,
-          user.hashedPassword
-        )
-
-        if (passwordsMatch) {
-          console.log(`Authorization successful for user: ${username}`)
-          const { hashedPassword, ...userWithoutPassword } = user
-          return {
-            ...userWithoutPassword,
-            username: username, // Ensure username is included
+        try {
+          if (!credentials?.username || !credentials?.password) {
+            throw new Error('Missing credentials')
           }
-        } else {
-          console.log(`Authorization failed: Invalid password for user - ${username}`)
-          return null
+
+          if (!redis) {
+            console.error('Redis client not available during authentication')
+            throw new Error('Authentication service unavailable')
+          }
+
+          const user = await getUserByUsername(credentials.username)
+          if (!user) {
+            throw new Error('Invalid username or password')
+          }
+
+          const isValid = await bcrypt.compare(credentials.password, user.hashedPassword)
+          if (!isValid) {
+            throw new Error('Invalid username or password')
+          }
+
+          return {
+            id: user.id,
+            username: credentials.username
+          }
+        } catch (error) {
+          console.error('Authentication error:', error)
+          throw error
         }
-      },
-    }),
+      }
+    })
   ],
+  pages: {
+    signIn: '/auth/signin',
+    error: '/auth/error'
+  },
   callbacks: {
     async jwt({ token, user }) {
-      if (user) {
-        token.id = user.id
-        token.username = user.username ?? undefined
+      try {
+        if (user) {
+          token.id = user.id
+          token.username = user.username ?? undefined
+        }
+        return token
+      } catch (error) {
+        console.error('JWT callback error:', error)
+        throw error
       }
-      return token
     },
     async session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.id
-        session.user.username = token.username
+      try {
+        if (session.user) {
+          session.user.id = token.id
+          session.user.username = token.username
+        }
+        return session
+      } catch (error) {
+        console.error('Session callback error:', error)
+        throw error
       }
-      return session
-    },
+    }
   },
   session: {
-    strategy: 'jwt',
+    strategy: "jwt"
   },
-  secret: process.env.NEXTAUTH_SECRET,
-  // debug: process.env.NODE_ENV === 'development', // Optional: Enable debug logs in dev
+  debug: process.env.NODE_ENV === 'development'
 }
 
 // Augment NextAuth types
