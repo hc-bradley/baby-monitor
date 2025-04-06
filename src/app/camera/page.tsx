@@ -19,7 +19,15 @@ export default function CameraPage() {
   })
 
   useEffect(() => {
-    socketRef.current = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001')
+    const socketUrl = typeof window !== 'undefined' ? window.location.origin : ''
+    socketRef.current = io(socketUrl, {
+      path: '/api/socket',
+      addTrailingSlash: false,
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      timeout: 10000
+    })
 
     return () => {
       if (streamRef.current) {

@@ -15,10 +15,13 @@ export default function MonitorPage() {
   useEffect(() => {
     const connectSocket = () => {
       try {
-        const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001'
+        // In production, this will use the current domain
+        const socketUrl = typeof window !== 'undefined' ? window.location.origin : ''
         console.log('Connecting to socket server at:', socketUrl)
 
         socketRef.current = io(socketUrl, {
+          path: '/api/socket',
+          addTrailingSlash: false,
           reconnection: true,
           reconnectionAttempts: 5,
           reconnectionDelay: 1000,
