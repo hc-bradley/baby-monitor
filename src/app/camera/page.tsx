@@ -34,7 +34,8 @@ export default function CameraPage() {
         hasCanvas: !!canvasRef.current,
         hasVideo: !!videoRef.current,
         hasChannel: !!channelRef.current,
-        isConnected
+        isConnected,
+        isStreaming
       });
       return;
     }
@@ -44,6 +45,16 @@ export default function CameraPage() {
     const channel = channelRef.current;
 
     try {
+      // Check if video is ready
+      if (video.readyState < video.HAVE_METADATA || video.videoWidth === 0 || video.videoHeight === 0) {
+        console.log('Video not ready:', {
+          readyState: video.readyState,
+          width: video.videoWidth,
+          height: video.videoHeight
+        });
+        return;
+      }
+
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
@@ -55,13 +66,13 @@ export default function CameraPage() {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const frameData = canvas.toDataURL('image/jpeg', 0.5);
 
-      console.log(`Sending frame ${frameCount + 1}`);
+      console.log(`Sending frame ${frameCount + 1} (${canvas.width}x${canvas.height})`);
       channel.trigger('camera-frame', frameData);
       setFrameCount(prev => prev + 1);
     } catch (err) {
       console.error('Error sending frame:', err);
     }
-  }, [isConnected, frameCount]);
+  }, [isConnected, frameCount, isStreaming]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -200,6 +211,8 @@ export default function CameraPage() {
           playsInline
           muted
           className="w-full h-full object-cover"
+          onLoadedData={() => console.log('Video loaded data')}
+          onLoadedMetadata={() => console.log('Video loaded metadata')}
         />
         <canvas
           ref={canvasRef}
@@ -252,6 +265,7 @@ export default function CameraPage() {
       <div className="text-sm text-muted-foreground">
         <p>Connection state: {connectionState}</p>
         <p>Frames sent: {frameCount}</p>
+        <p>Streaming: {isStreaming ? 'Yes' : 'No'}</p>
       </div>
     </main>
   )
