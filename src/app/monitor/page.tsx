@@ -46,7 +46,7 @@ export default function MonitorPage() {
 
         socket.on('connect_error', (err: Error) => {
           console.error('Socket connection error:', err);
-          if (err.message.includes('websocket')) {
+          if (socket && err.message.includes('websocket')) {
             // Try to reconnect with polling if WebSocket fails
             socket.io.opts.transports = ['polling', 'websocket'];
             socket.connect();
