@@ -9,52 +9,97 @@ import Redis from 'ioredis'
 // Initialize Redis client with better error handling
 let redis: Redis | null = null
 
-try {
+// Function to initialize Redis with retries
+async function initializeRedis() {
   const redisUrl = process.env.REDIS_URL
   if (!redisUrl) {
     console.error('REDIS_URL environment variable is not set.')
-    throw new Error('REDIS_URL is required for authentication')
+    return null
   }
 
-  // Log the Redis URL (without sensitive parts) for debugging
-  const maskedUrl = redisUrl.replace(/(redis:\/\/[^:]+):([^@]+)@/, '$1:****@')
-  console.log('Connecting to Redis at:', maskedUrl)
+  try {
+    // Log the Redis URL (without sensitive parts) for debugging
+    const maskedUrl = redisUrl.replace(/(redis:\/\/[^:]+):([^@]+)@/, '$1:****@')
+    console.log('Connecting to Redis at:', maskedUrl)
 
-  redis = new Redis(redisUrl, {
-    retryStrategy: (times) => {
-      const delay = Math.min(times * 50, 2000)
-      console.log(`Redis connection attempt ${times}, retrying in ${delay}ms`)
-      return delay
-    },
-    maxRetriesPerRequest: 3,
-    enableReadyCheck: true,
-    connectTimeout: 10000
-  })
+    const client = new Redis(redisUrl, {
+      retryStrategy: (times) => {
+        const delay = Math.min(times * 50, 2000)
+        console.log(`Redis connection attempt ${times}, retrying in ${delay}ms`)
+        return delay
+      },
+      maxRetriesPerRequest: 3,
+      enableReadyCheck: true,
+      connectTimeout: 10000
+    })
 
-  redis.on('error', (err) => {
-    console.error('Redis Client Error:', err)
-    // Don't throw here, just log the error
-  })
+    // Set up event handlers
+    client.on('error', (err) => {
+      console.error('Redis Client Error:', err)
+    })
 
-  redis.on('connect', () => {
-    console.log('Redis connected successfully')
-  })
+    client.on('connect', () => {
+      console.log('Redis connected successfully')
+    })
 
-  redis.on('ready', () => {
-    console.log('Redis client is ready')
-  })
+    client.on('ready', () => {
+      console.log('Redis client is ready')
+    })
 
-  redis.on('reconnecting', () => {
-    console.log('Redis reconnecting...')
-  })
+    client.on('reconnecting', () => {
+      console.log('Redis reconnecting...')
+    })
 
-  redis.on('end', () => {
-    console.log('Redis connection ended')
-  })
+    client.on('end', () => {
+      console.log('Redis connection ended')
+    })
 
-} catch (error) {
-  console.error('Failed to initialize Redis client:', error)
-  // Don't throw here, we'll handle Redis unavailability in the auth flow
+    // Wait for the connection to be ready
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Redis connection timeout'))
+      }, 10000)
+
+      client.once('ready', () => {
+        clearTimeout(timeout)
+        resolve(true)
+      })
+
+      client.once('error', (err) => {
+        clearTimeout(timeout)
+        reject(err)
+      })
+    })
+
+    // Test the connection
+    await client.ping()
+    console.log('Redis connection test successful')
+    return client
+  } catch (error) {
+    console.error('Failed to initialize Redis client:', error)
+    return null
+  }
+}
+
+// Initialize Redis immediately and store the promise
+const redisInitPromise = initializeRedis().then(client => {
+  redis = client
+  return client
+}).catch(error => {
+  console.error('Failed to initialize Redis:', error)
+  redis = null
+  return null
+})
+
+// Ensure Redis is initialized before any auth operations
+async function ensureRedis() {
+  if (!redis) {
+    redis = await redisInitPromise
+  }
+  if (!redis) {
+    throw new Error('Redis connection failed')
+  }
+  return redis
 }
 
 // Define the structure for user data stored in Redis
@@ -153,14 +198,11 @@ export const authConfig: AuthOptions = {
             throw new Error('Missing credentials')
           }
 
-          if (!redis) {
-            console.error('Redis client not available during authentication')
-            throw new Error('Authentication service unavailable')
-          }
-
+          // Ensure Redis is connected before proceeding
+          const redisClient = await ensureRedis()
           console.log(`Attempting to authenticate user: ${credentials.username}`)
-          const user = await getUserByUsername(credentials.username)
 
+          const user = await getUserByUsername(credentials.username)
           if (!user) {
             console.error(`User not found: ${credentials.username}`)
             throw new Error('Invalid username or password')
