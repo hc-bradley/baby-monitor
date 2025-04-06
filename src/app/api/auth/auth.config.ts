@@ -164,7 +164,7 @@ export const authOptions: AuthOptions = {
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id
-        token.username = user.username
+        token.username = user.username ?? undefined
       }
       return token
     },
@@ -186,14 +186,15 @@ export const authOptions: AuthOptions = {
 // Augment NextAuth types
 declare module 'next-auth' {
   interface Session extends DefaultSession {
-    user?: {
+    // Intersect custom properties directly onto the user object
+    user: DefaultSession['user'] & {
       id?: string;
       username?: string;
-    } & DefaultSession['user'];
+    };
   }
 
+  // Only add the custom property to the base User interface
   interface User {
-    id: string;
     username?: string | null;
   }
 }
