@@ -1,38 +1,30 @@
-import { Server as SocketIOServer } from 'socket.io'
-import { createServer } from 'http'
-import { NextApiRequest } from 'next'
-import { NextApiResponse } from 'next'
+import { Server } from 'socket.io'
+import { NextRequest } from 'next/server'
 
-const ioHandler = (req: NextApiRequest, res: NextApiResponse) => {
-  if (!res.socket.server.io) {
-    const path = '/api/socket'
-    const httpServer = createServer()
-    const io = new SocketIOServer(httpServer, {
-      path: path,
-      addTrailingSlash: false,
-      cors: {
-        origin: '*',
-        methods: ['GET', 'POST']
-      }
-    })
-
-    io.on('connection', (socket) => {
-      console.log('Client connected:', socket.id)
-
-      socket.on('camera-frame', (frameData: string) => {
-        socket.broadcast.emit('camera-frame', frameData)
-      })
-
-      socket.on('disconnect', () => {
-        console.log('Client disconnected:', socket.id)
-      })
-    })
-
-    res.socket.server.io = io
+const io = new Server({
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
   }
+})
 
-  res.end()
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id)
+
+  socket.on('camera-frame', (frameData: string) => {
+    socket.broadcast.emit('camera-frame', frameData)
+  })
+
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id)
+  })
+})
+
+export async function GET(request: NextRequest) {
+  // @ts-ignore
+  const response = await io.handleUpgrade(request)
+  return response
 }
 
-export const GET = ioHandler
-export const POST = ioHandler
+export const dynamic = 'force-dynamic'
+export const runtime = 'edge'

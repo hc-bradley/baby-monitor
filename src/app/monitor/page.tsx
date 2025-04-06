@@ -15,7 +15,6 @@ export default function MonitorPage() {
   useEffect(() => {
     const connectSocket = () => {
       try {
-        // In production, this will use the current domain
         const socketUrl = typeof window !== 'undefined' ? window.location.origin : ''
         console.log('Connecting to socket server at:', socketUrl)
 
@@ -25,7 +24,9 @@ export default function MonitorPage() {
           reconnection: true,
           reconnectionAttempts: 5,
           reconnectionDelay: 1000,
-          timeout: 10000
+          timeout: 10000,
+          transports: ['websocket'],
+          upgrade: false
         })
 
         socketRef.current.on('connect', () => {
