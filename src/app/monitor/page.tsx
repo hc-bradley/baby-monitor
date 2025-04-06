@@ -33,7 +33,12 @@ export default function MonitorPage() {
         params: {
           user_id: 'monitor'
         }
-      }
+      },
+      disableStats: true,
+      activityTimeout: 30000,
+      pongTimeout: 10000,
+      maxReconnectionAttempts: 5,
+      maxReconnectGapInSeconds: 30
     });
 
     pusherRef.current = pusher;
@@ -80,6 +85,7 @@ export default function MonitorPage() {
 
     channel.bind('pusher:subscription_succeeded', () => {
       console.log('Successfully subscribed to camera-feed channel');
+      console.log('Client events enabled for camera-feed channel');
     });
 
     channel.bind('pusher:subscription_error', (err: any) => {

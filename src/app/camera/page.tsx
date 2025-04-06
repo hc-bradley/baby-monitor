@@ -96,7 +96,12 @@ export default function CameraPage() {
         params: {
           user_id: 'camera'
         }
-      }
+      },
+      disableStats: true,
+      activityTimeout: 30000,
+      pongTimeout: 10000,
+      maxReconnectionAttempts: 5,
+      maxReconnectGapInSeconds: 30
     });
 
     pusherRef.current = pusher;
@@ -134,14 +139,7 @@ export default function CameraPage() {
     // Enable client events
     channel.bind('pusher:subscription_succeeded', () => {
       console.log('Successfully subscribed to camera-feed channel');
-      channel.trigger('client-camera-frame', {
-        frame: '',
-        timestamp: Date.now(),
-        dimensions: {
-          width: 0,
-          height: 0
-        }
-      });
+      console.log('Client events enabled for camera-feed channel');
     });
 
     channel.bind('pusher:subscription_error', (err: any) => {
