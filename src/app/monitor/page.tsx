@@ -11,6 +11,7 @@ export default function MonitorPage() {
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [error, setError] = useState<string>('')
   const [isReconnecting, setIsReconnecting] = useState(false)
+  const [hasReceivedFrame, setHasReceivedFrame] = useState(false)
 
   useEffect(() => {
     let socket: Socket | null = null;
@@ -32,8 +33,11 @@ export default function MonitorPage() {
           timeout: 10000,
           transports: ['websocket'],
           forceNew: true,
-          withCredentials: true
+          withCredentials: true,
+          autoConnect: false
         });
+
+        socket.connect();
 
         socketRef.current = socket;
 
@@ -46,14 +50,15 @@ export default function MonitorPage() {
 
         socket.on('connect_error', (err: Error) => {
           console.error('Socket connection error:', err);
-          if (socket && err.message.includes('websocket')) {
-            // Try to reconnect with polling if WebSocket fails
-            socket.io.opts.transports = ['polling', 'websocket'];
-            socket.connect();
-          } else {
-            setError(`Connection error: ${err.message}. Make sure the camera is running and accessible.`);
-            setIsConnected(false);
-          }
+          setError(`Connection error: ${err.message}. Make sure the camera is running and accessible.`);
+          setIsConnected(false);
+          setIsReconnecting(true);
+
+          setTimeout(() => {
+            if (socket && !socket.connected) {
+              socket.connect();
+            }
+          }, 2000);
         });
 
         socket.on('disconnect', (reason: string) => {
@@ -78,9 +83,15 @@ export default function MonitorPage() {
         });
 
         socket.on('camera-frame', (frameData: string) => {
+          console.log('Received frame data');
           if (imageRef.current) {
-            imageRef.current.src = frameData;
-            setLastUpdate(new Date());
+            try {
+              imageRef.current.src = frameData;
+              setLastUpdate(new Date());
+              setHasReceivedFrame(true);
+            } catch (err) {
+              console.error('Error setting frame data:', err);
+            }
           }
         });
       } catch (err) {
@@ -116,13 +127,19 @@ export default function MonitorPage() {
       <div className="relative w-full max-w-3xl aspect-video bg-black rounded-lg overflow-hidden">
         <img
           ref={imageRef}
-          className="w-full h-full object-contain"
+          className={`w-full h-full object-contain ${!hasReceivedFrame ? 'hidden' : ''}`}
           alt="Video feed"
+          onError={(e) => {
+            console.error('Error loading image:', e);
+            setError('Error displaying video feed');
+          }}
         />
 
-        {!isConnected && (
+        {(!isConnected || !hasReceivedFrame) && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white">
-            {isReconnecting ? 'Reconnecting to camera...' : 'Connecting to camera...'}
+            {!isConnected ? 'Connecting to camera...' :
+             isReconnecting ? 'Reconnecting to camera...' :
+             'Waiting for video feed...'}
           </div>
         )}
       </div>
