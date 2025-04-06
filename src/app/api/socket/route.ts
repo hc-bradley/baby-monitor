@@ -9,17 +9,54 @@ const pusher = new Pusher({
   useTLS: true
 });
 
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
-    const { channel, event, data } = await request.json();
+    const { socket_id, channel_name } = await req.json();
 
-    await pusher.trigger(channel, event, data);
+    // Generate auth response for the client
+    const authResponse = pusher.authenticateUser(socket_id, {
+      id: 'user_id',
+      user_info: {
+        name: 'User'
+      }
+    });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json(authResponse);
   } catch (error) {
-    console.error('Pusher error:', error);
+    console.error('Error authenticating Pusher:', error);
     return NextResponse.json(
-      { error: 'Failed to send message' },
+      { error: 'Authentication failed' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const socket_id = searchParams.get('socket_id');
+    const channel_name = searchParams.get('channel_name');
+
+    if (!socket_id || !channel_name) {
+      return NextResponse.json(
+        { error: 'Missing socket_id or channel_name' },
+        { status: 400 }
+      );
+    }
+
+    // Generate auth response for the channel
+    const authResponse = pusher.authorizeChannel(socket_id, channel_name, {
+      user_id: 'user_id',
+      user_info: {
+        name: 'User'
+      }
+    });
+
+    return NextResponse.json(authResponse);
+  } catch (error) {
+    console.error('Error authorizing channel:', error);
+    return NextResponse.json(
+      { error: 'Authorization failed' },
       { status: 500 }
     );
   }

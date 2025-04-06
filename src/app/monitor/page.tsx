@@ -27,7 +27,13 @@ export default function MonitorPage() {
     const pusher = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
       cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
       forceTLS: true,
-      enabledTransports: ['ws', 'wss']
+      enabledTransports: ['ws', 'wss'],
+      authEndpoint: '/api/socket',
+      auth: {
+        params: {
+          user_id: 'monitor'
+        }
+      }
     });
 
     pusherRef.current = pusher;
