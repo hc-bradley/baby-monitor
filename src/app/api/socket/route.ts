@@ -13,9 +13,9 @@ export async function POST(req: Request) {
   try {
     const { socket_id, channel_name } = await req.json();
 
-    // Generate auth response for the client
-    const authResponse = pusher.authenticateUser(socket_id, {
-      id: 'user_id',
+    // Generate auth response for the channel
+    const authResponse = pusher.authorizeChannel(socket_id, channel_name, {
+      user_id: socket_id, // Use socket_id as user_id for uniqueness
       user_info: {
         name: 'User'
       }
@@ -23,9 +23,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json(authResponse);
   } catch (error) {
-    console.error('Error authenticating Pusher:', error);
+    console.error('Error authorizing channel:', error);
     return NextResponse.json(
-      { error: 'Authentication failed' },
+      { error: 'Authorization failed' },
       { status: 500 }
     );
   }
@@ -46,7 +46,7 @@ export async function GET(req: Request) {
 
     // Generate auth response for the channel
     const authResponse = pusher.authorizeChannel(socket_id, channel_name, {
-      user_id: 'user_id',
+      user_id: socket_id, // Use socket_id as user_id for uniqueness
       user_info: {
         name: 'User'
       }
