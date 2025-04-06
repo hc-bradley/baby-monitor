@@ -99,9 +99,7 @@ export default function CameraPage() {
       },
       disableStats: true,
       activityTimeout: 30000,
-      pongTimeout: 10000,
-      maxReconnectionAttempts: 5,
-      maxReconnectGapInSeconds: 30
+      pongTimeout: 10000
     });
 
     pusherRef.current = pusher;
@@ -111,15 +109,17 @@ export default function CameraPage() {
     const channel = pusher.subscribe('camera-feed');
     channelRef.current = channel;
 
+    // Handle connection state changes
     pusher.connection.bind('state_change', (states: { current: string, previous: string }) => {
       console.log('Pusher state changed:', states);
       setConnectionState(states.current);
+      setIsConnected(states.current === 'connected');
+      setIsReconnecting(states.current === 'connecting');
     });
 
     pusher.connection.bind('connected', () => {
       console.log('Pusher connected');
       setIsConnected(true);
-      setError('');
       setIsReconnecting(false);
     });
 

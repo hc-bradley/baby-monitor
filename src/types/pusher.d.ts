@@ -5,8 +5,6 @@ declare module 'pusher-js' {
     disableStats?: boolean;
     activityTimeout?: number;
     pongTimeout?: number;
-    maxReconnectionAttempts?: number;
-    maxReconnectGapInSeconds?: number;
   }
 
   interface Channel {

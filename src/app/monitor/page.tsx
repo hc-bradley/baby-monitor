@@ -36,9 +36,7 @@ export default function MonitorPage() {
       },
       disableStats: true,
       activityTimeout: 30000,
-      pongTimeout: 10000,
-      maxReconnectionAttempts: 5,
-      maxReconnectGapInSeconds: 30
+      pongTimeout: 10000
     });
 
     pusherRef.current = pusher;
@@ -48,15 +46,17 @@ export default function MonitorPage() {
     const channel = pusher.subscribe('camera-feed');
     channelRef.current = channel;
 
+    // Handle connection state changes
     pusher.connection.bind('state_change', (states: { current: string, previous: string }) => {
       console.log('Pusher state changed:', states);
       setConnectionState(states.current);
+      setIsConnected(states.current === 'connected');
+      setIsReconnecting(states.current === 'connecting');
     });
 
     pusher.connection.bind('connected', () => {
       console.log('Pusher connected');
       setIsConnected(true);
-      setError('');
       setIsReconnecting(false);
     });
 
@@ -83,6 +83,7 @@ export default function MonitorPage() {
       setHasReceivedFrame(true);
     });
 
+    // Enable client events
     channel.bind('pusher:subscription_succeeded', () => {
       console.log('Successfully subscribed to camera-feed channel');
       console.log('Client events enabled for camera-feed channel');
