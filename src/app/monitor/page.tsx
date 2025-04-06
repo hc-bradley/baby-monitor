@@ -15,6 +15,8 @@ export default function MonitorPage() {
   const [isReconnecting, setIsReconnecting] = useState(false)
   const [hasReceivedFrame, setHasReceivedFrame] = useState(false)
   const [connectionState, setConnectionState] = useState<string>('initializing')
+  const [lastFrame, setLastFrame] = useState<string>('')
+  const [lastFrameTime, setLastFrameTime] = useState<number>(0)
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -60,17 +62,14 @@ export default function MonitorPage() {
       setIsReconnecting(true);
     });
 
-    channel.bind('camera-frame', (data: string) => {
-      console.log('Received frame data');
-      if (imageRef.current) {
-        try {
-          imageRef.current.src = data;
-          setLastUpdate(new Date());
-          setHasReceivedFrame(true);
-        } catch (err) {
-          console.error('Error setting frame data:', err);
-        }
-      }
+    channel.bind('client-camera-frame', (data: { frame: string, timestamp: number, dimensions: { width: number, height: number } }) => {
+      console.log('Received frame:', {
+        timestamp: data.timestamp,
+        dimensions: data.dimensions
+      });
+      setLastFrame(data.frame);
+      setLastFrameTime(data.timestamp);
+      setHasReceivedFrame(true);
     });
 
     channel.bind('pusher:subscription_succeeded', () => {
@@ -107,22 +106,17 @@ export default function MonitorPage() {
         <div className="w-[60px]" />
       </div>
 
-      <div className="relative w-full max-w-3xl aspect-video bg-black rounded-lg overflow-hidden">
-        <img
-          ref={imageRef}
-          className={`w-full h-full object-contain ${!hasReceivedFrame ? 'hidden' : ''}`}
-          alt="Video feed"
-          onError={(e) => {
-            console.error('Error loading image:', e);
-            setError('Error displaying video feed');
-          }}
-        />
-
-        {(!isConnected || !hasReceivedFrame) && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white">
-            {!isConnected ? `Connecting to camera... (${connectionState})` :
-             isReconnecting ? 'Reconnecting to camera...' :
-             'Waiting for video feed...'}
+      <div className="relative w-full h-full">
+        {hasReceivedFrame ? (
+          <img
+            ref={imageRef}
+            src={lastFrame}
+            alt="Camera feed"
+            className="w-full h-full object-contain"
+          />
+        ) : (
+          <div className="flex items-center justify-center h-full">
+            <p className="text-gray-500">Waiting for video feed...</p>
           </div>
         )}
       </div>

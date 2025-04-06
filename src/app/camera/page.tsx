@@ -67,7 +67,14 @@ export default function CameraPage() {
       const frameData = canvas.toDataURL('image/jpeg', 0.5);
 
       console.log(`Sending frame ${frameCount + 1} (${canvas.width}x${canvas.height})`);
-      channel.trigger('camera-frame', frameData);
+      channel.trigger('client-camera-frame', {
+        frame: frameData,
+        timestamp: Date.now(),
+        dimensions: {
+          width: video.videoWidth,
+          height: video.videoHeight
+        }
+      });
       setFrameCount(prev => prev + 1);
     } catch (err) {
       console.error('Error sending frame:', err);
