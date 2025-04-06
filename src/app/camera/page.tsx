@@ -6,6 +6,7 @@ import Link from 'next/link'
 
 export default function CameraPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const socketRef = useRef<any>(null)
   const [error, setError] = useState<string>('')
@@ -24,6 +25,35 @@ export default function CameraPage() {
     }
   }, [])
 
+  const captureFrame = async (videoTrack: MediaStreamTrack) => {
+    if (!videoRef.current || !canvasRef.current) return null;
+
+    try {
+      if ('ImageCapture' in window) {
+        const imageCapture = new ImageCapture(videoTrack);
+        return await imageCapture.takePhoto();
+      } else {
+        // Fallback to canvas capture
+        const canvas = canvasRef.current;
+        const video = videoRef.current;
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+
+        ctx.drawImage(video, 0, 0);
+        return new Promise<Blob>((resolve) => {
+          canvas.toBlob((blob) => {
+            if (blob) resolve(blob);
+          }, 'image/jpeg', 0.8);
+        });
+      }
+    } catch (err) {
+      console.error('Error capturing frame:', err);
+      return null;
+    }
+  }
+
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -36,25 +66,23 @@ export default function CameraPage() {
         videoRef.current.srcObject = stream
       }
 
-      // Set up video streaming
       const videoTrack = stream.getVideoTracks()[0]
-      const imageCapture = new ImageCapture(videoTrack)
 
       const sendFrame = async () => {
         if (!isStreaming) return
 
         try {
-          const blob = await imageCapture.takePhoto()
-          const reader = new FileReader()
+          const blob = await captureFrame(videoTrack);
+          if (!blob) return;
 
+          const reader = new FileReader()
           reader.onloadend = () => {
             socketRef.current.emit('camera-frame', reader.result)
           }
-
           reader.readAsDataURL(blob)
           setTimeout(sendFrame, 100) // Send frame every 100ms
         } catch (err) {
-          console.error('Error capturing frame:', err)
+          console.error('Error sending frame:', err)
         }
       }
 
@@ -93,6 +121,10 @@ export default function CameraPage() {
           playsInline
           muted
           className="w-full h-full object-cover"
+        />
+        <canvas
+          ref={canvasRef}
+          className="hidden"
         />
       </div>
 
