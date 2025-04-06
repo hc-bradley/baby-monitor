@@ -6,6 +6,22 @@ import bcrypt from 'bcrypt'
 import { v4 as uuidv4 } from 'uuid'
 import Redis from 'ioredis'
 
+// Validate required environment variables
+if (!process.env.REDIS_URL) {
+  console.error('REDIS_URL environment variable is not set.')
+  throw new Error('REDIS_URL is required for authentication')
+}
+
+if (!process.env.NEXTAUTH_SECRET) {
+  console.error('NEXTAUTH_SECRET environment variable is not set.')
+  throw new Error('NEXTAUTH_SECRET is required for authentication')
+}
+
+if (!process.env.NEXTAUTH_URL) {
+  console.error('NEXTAUTH_URL environment variable is not set.')
+  throw new Error('NEXTAUTH_URL is required for authentication')
+}
+
 // Initialize Redis client with better error handling
 let redis: Redis | null = null
 
@@ -177,12 +193,6 @@ export async function addUser(username: string, password: string): Promise<User 
   }
 }
 
-// Ensure NEXTAUTH_SECRET is set
-if (!process.env.NEXTAUTH_SECRET) {
-  console.error('NEXTAUTH_SECRET environment variable is not set.')
-  // In a real app, you might throw an error or handle this more gracefully
-}
-
 export const authConfig: AuthOptions = {
   providers: [
     Credentials({
@@ -257,7 +267,8 @@ export const authConfig: AuthOptions = {
     }
   },
   session: {
-    strategy: "jwt"
+    strategy: "jwt",
+    maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   debug: true, // Enable debug logs in production to help diagnose issues
   secret: process.env.NEXTAUTH_SECRET
