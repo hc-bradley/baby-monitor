@@ -9,24 +9,70 @@ export default function MonitorPage() {
   const socketRef = useRef<any>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
+  const [error, setError] = useState<string>('')
+  const [isReconnecting, setIsReconnecting] = useState(false)
 
   useEffect(() => {
-    socketRef.current = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001')
+    const connectSocket = () => {
+      try {
+        const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001'
+        console.log('Connecting to socket server at:', socketUrl)
 
-    socketRef.current.on('connect', () => {
-      setIsConnected(true)
-    })
+        socketRef.current = io(socketUrl, {
+          reconnection: true,
+          reconnectionAttempts: 5,
+          reconnectionDelay: 1000,
+          timeout: 10000
+        })
 
-    socketRef.current.on('disconnect', () => {
-      setIsConnected(false)
-    })
+        socketRef.current.on('connect', () => {
+          console.log('Socket connected')
+          setIsConnected(true)
+          setError('')
+          setIsReconnecting(false)
+        })
 
-    socketRef.current.on('camera-frame', (frameData: string) => {
-      if (imageRef.current) {
-        imageRef.current.src = frameData
-        setLastUpdate(new Date())
+        socketRef.current.on('connect_error', (err: Error) => {
+          console.error('Socket connection error:', err)
+          setError(`Connection error: ${err.message}. Make sure the camera is running and accessible.`)
+          setIsConnected(false)
+        })
+
+        socketRef.current.on('disconnect', (reason: string) => {
+          console.log('Socket disconnected:', reason)
+          setIsConnected(false)
+          if (reason === 'io server disconnect') {
+            // Server initiated disconnect, try to reconnect
+            setIsReconnecting(true)
+            socketRef.current.connect()
+          }
+        })
+
+        socketRef.current.on('reconnecting', (attemptNumber: number) => {
+          console.log('Attempting to reconnect:', attemptNumber)
+          setIsReconnecting(true)
+          setError(`Attempting to reconnect... (${attemptNumber}/5)`)
+        })
+
+        socketRef.current.on('reconnect_failed', () => {
+          console.log('Reconnection failed')
+          setIsReconnecting(false)
+          setError('Failed to connect to the camera. Please refresh the page or check if the camera is running.')
+        })
+
+        socketRef.current.on('camera-frame', (frameData: string) => {
+          if (imageRef.current) {
+            imageRef.current.src = frameData
+            setLastUpdate(new Date())
+          }
+        })
+      } catch (err) {
+        console.error('Error setting up socket:', err)
+        setError('Failed to initialize connection. Please refresh the page.')
       }
-    })
+    }
+
+    connectSocket()
 
     return () => {
       if (socketRef.current) {
@@ -57,7 +103,7 @@ export default function MonitorPage() {
 
         {!isConnected && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white">
-            Connecting to camera...
+            {isReconnecting ? 'Reconnecting to camera...' : 'Connecting to camera...'}
           </div>
         )}
       </div>
@@ -68,6 +114,18 @@ export default function MonitorPage() {
           {isConnected ? 'Connected' : 'Disconnected'}
         </span>
       </div>
+
+      {error && (
+        <div className="w-full max-w-3xl p-4 bg-destructive/10 text-destructive rounded-lg">
+          <p className="text-center">{error}</p>
+          <p className="text-sm text-center mt-2">
+            Troubleshooting steps:
+            <br />1. Make sure the camera page is open and streaming
+            <br />2. Check your internet connection
+            <br />3. Try refreshing both the camera and monitor pages
+          </p>
+        </div>
+      )}
 
       {lastUpdate && (
         <p className="text-sm text-muted-foreground">
