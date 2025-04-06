@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import { v4 as uuidv4 } from 'uuid'
-
-// This is a simple in-memory user store. In production, use a proper database
-const users = new Map<string, { id: string; email: string; password: string }>()
+import { users } from '../auth.config'
 
 export async function POST(request: Request) {
   try {
