@@ -30,7 +30,8 @@ export default function MonitorPage() {
           reconnectionAttempts: 5,
           reconnectionDelay: 1000,
           timeout: 10000,
-          transports: ['websocket', 'polling'],
+          transports: ['websocket'],
+          forceNew: true,
           withCredentials: true
         });
 
@@ -45,8 +46,14 @@ export default function MonitorPage() {
 
         socket.on('connect_error', (err: Error) => {
           console.error('Socket connection error:', err);
-          setError(`Connection error: ${err.message}. Make sure the camera is running and accessible.`);
-          setIsConnected(false);
+          if (err.message.includes('websocket')) {
+            // Try to reconnect with polling if WebSocket fails
+            socket.io.opts.transports = ['polling', 'websocket'];
+            socket.connect();
+          } else {
+            setError(`Connection error: ${err.message}. Make sure the camera is running and accessible.`);
+            setIsConnected(false);
+          }
         });
 
         socket.on('disconnect', (reason: string) => {

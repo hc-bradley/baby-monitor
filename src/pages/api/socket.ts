@@ -1,16 +1,25 @@
-import { Server as ServerIO } from 'socket.io';
-import { NextApiRequest } from 'next';
-import { NextApiResponse } from 'next';
+import { Server as NetServer } from 'http'
+import { NextApiRequest, NextApiResponse } from 'next'
+import { Server as ServerIO } from 'socket.io'
+import { Socket as NetSocket } from 'net'
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
+export interface SocketServer extends NetServer {
+  io?: ServerIO
+}
 
-const ioHandler = (req: NextApiRequest, res: NextApiResponse) => {
-  if (!(res.socket as any).server.io) {
-    const io = new ServerIO((res.socket as any).server, {
+interface SocketWithIO extends NetSocket {
+  server: SocketServer
+}
+
+interface NextApiResponseWithSocket extends NextApiResponse {
+  socket: SocketWithIO
+}
+
+const ioHandler = (req: NextApiRequest, res: NextApiResponseWithSocket) => {
+  if (!res.socket.server.io) {
+    console.log('Initializing Socket.IO server...')
+
+    const io = new ServerIO(res.socket.server, {
       path: '/api/socket',
       addTrailingSlash: false,
       cors: {
@@ -19,24 +28,32 @@ const ioHandler = (req: NextApiRequest, res: NextApiResponse) => {
         credentials: true
       },
       transports: ['websocket', 'polling'],
-    });
+      pingTimeout: 60000,
+      pingInterval: 25000,
+    })
 
     io.on('connection', (socket) => {
-      console.log('Client connected:', socket.id);
+      console.log('Client connected:', socket.id)
 
       socket.on('camera-frame', (frameData: string) => {
-        socket.broadcast.emit('camera-frame', frameData);
-      });
+        socket.broadcast.emit('camera-frame', frameData)
+      })
 
       socket.on('disconnect', () => {
-        console.log('Client disconnected:', socket.id);
-      });
-    });
+        console.log('Client disconnected:', socket.id)
+      })
+    })
 
-    (res.socket as any).server.io = io;
+    res.socket.server.io = io
   }
 
-  res.end();
-};
+  res.end()
+}
 
-export default ioHandler;
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+}
+
+export default ioHandler
