@@ -131,8 +131,17 @@ export default function CameraPage() {
       setIsReconnecting(true);
     });
 
+    // Enable client events
     channel.bind('pusher:subscription_succeeded', () => {
       console.log('Successfully subscribed to camera-feed channel');
+      channel.trigger('client-camera-frame', {
+        frame: '',
+        timestamp: Date.now(),
+        dimensions: {
+          width: 0,
+          height: 0
+        }
+      });
     });
 
     channel.bind('pusher:subscription_error', (err: any) => {
