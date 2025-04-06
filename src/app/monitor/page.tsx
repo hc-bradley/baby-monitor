@@ -25,12 +25,12 @@ export default function MonitorPage() {
           reconnectionAttempts: 5,
           reconnectionDelay: 1000,
           timeout: 10000,
-          transports: ['websocket'],
-          upgrade: false
+          transports: ['websocket', 'polling'],
+          withCredentials: true
         })
 
         socketRef.current.on('connect', () => {
-          console.log('Socket connected')
+          console.log('Socket connected:', socketRef.current.id)
           setIsConnected(true)
           setError('')
           setIsReconnecting(false)

@@ -27,8 +27,8 @@ export default function CameraPage() {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       timeout: 10000,
-      transports: ['websocket'],
-      upgrade: false
+      transports: ['websocket', 'polling'],
+      withCredentials: true
     })
 
     return () => {
