@@ -12,16 +12,21 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@auth/core": "^0.38.0",
     "@shadcn/ui": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@types/uuid": "^10.0.0",
+    "bcryptjs": "^3.0.2",
     "next": "latest",
+    "next-auth": "^5.0.0-beta.25",
     "react": "latest",
     "react-dom": "latest",
     "socket.io": "^4.7.4",
     "socket.io-client": "^4.7.4",
-    "typescript": "latest"
+    "typescript": "latest",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.14",
