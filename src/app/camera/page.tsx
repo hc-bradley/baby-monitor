@@ -11,6 +11,12 @@ export default function CameraPage() {
   const socketRef = useRef<any>(null)
   const [error, setError] = useState<string>('')
   const [isStreaming, setIsStreaming] = useState(false)
+  const [isMobile] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+    }
+    return false
+  })
 
   useEffect(() => {
     socketRef.current = io(process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001')
@@ -56,28 +62,54 @@ export default function CameraPage() {
 
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true
-      })
+      setError('') // Clear any previous errors
 
-      streamRef.current = stream
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
+      // Check if getUserMedia is supported
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Camera access is not supported in this browser')
       }
 
+      // Different constraints for mobile and desktop
+      const constraints = {
+        video: isMobile ? {
+          facingMode: { ideal: 'environment' }, // Prefer back camera on mobile
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } : {
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false // We don't need audio for the baby monitor
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+
+      // Check if component is still mounted
+      if (!videoRef.current) return
+
+      streamRef.current = stream
+      videoRef.current.srcObject = stream
+
+      // Wait for video to be ready
+      await new Promise((resolve) => {
+        if (videoRef.current) {
+          videoRef.current.onloadedmetadata = resolve
+        }
+      })
+
       const videoTrack = stream.getVideoTracks()[0]
+      console.log('Camera capabilities:', videoTrack.getCapabilities())
 
       const sendFrame = async () => {
         if (!isStreaming) return
 
         try {
-          const blob = await captureFrame(videoTrack);
-          if (!blob) return;
+          const blob = await captureFrame(videoTrack)
+          if (!blob) return
 
           const reader = new FileReader()
           reader.onloadend = () => {
-            socketRef.current.emit('camera-frame', reader.result)
+            socketRef.current?.emit('camera-frame', reader.result)
           }
           reader.readAsDataURL(blob)
           setTimeout(sendFrame, 100) // Send frame every 100ms
@@ -89,7 +121,21 @@ export default function CameraPage() {
       setIsStreaming(true)
       sendFrame()
     } catch (err: any) {
-      setError(err.message || 'Failed to access camera')
+      console.error('Camera access error:', err)
+      let errorMessage = 'Failed to access camera'
+
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        errorMessage = 'Camera access was denied. Please grant permission and try again.'
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        errorMessage = 'No camera found on your device.'
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        errorMessage = 'Your camera is in use by another application.'
+      } else if (err.name === 'OverconstrainedError') {
+        errorMessage = 'Could not find a camera matching the requirements.'
+      }
+
+      setError(errorMessage)
+      setIsStreaming(false)
     }
   }
 
@@ -99,6 +145,7 @@ export default function CameraPage() {
       streamRef.current = null
     }
     setIsStreaming(false)
+    setError('')
   }
 
   return (
@@ -146,11 +193,24 @@ export default function CameraPage() {
       </div>
 
       {error && (
-        <p className="text-destructive text-center">{error}</p>
+        <div className="w-full max-w-3xl p-4 bg-destructive/10 text-destructive rounded-lg">
+          <p className="text-center">{error}</p>
+          {error.includes('denied') && (
+            <p className="text-sm text-center mt-2">
+              To fix this, please:
+              <br />1. Check your browser settings
+              <br />2. Look for the camera icon in the address bar
+              <br />3. Make sure this site has camera permissions
+            </p>
+          )}
+        </div>
       )}
 
       <p className="text-muted-foreground text-center max-w-md">
-        Point this camera at the area you want to monitor. Make sure you have good lighting and a stable internet connection.
+        {isMobile ?
+          "Using the back camera for monitoring. Make sure you have good lighting and a stable internet connection." :
+          "Point this camera at the area you want to monitor. Make sure you have good lighting and a stable internet connection."
+        }
       </p>
     </main>
   )
