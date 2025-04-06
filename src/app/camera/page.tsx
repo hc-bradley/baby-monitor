@@ -35,28 +35,58 @@ export default function CameraPage() {
         console.log('Connecting to socket server at:', socketUrl);
         const io = (await import('socket.io-client')).io;
         socket = io(socketUrl, {
-          path: '/api/socket', addTrailingSlash: false, reconnection: true,
-          reconnectionAttempts: 5, reconnectionDelay: 1000, timeout: 10000,
-          transports: ['websocket'], forceNew: true, withCredentials: true, autoConnect: true // Connect automatically
+          path: '/api/socket',
+          addTrailingSlash: false,
+          reconnection: true,
+          reconnectionAttempts: Infinity,
+          reconnectionDelay: 1000,
+          reconnectionDelayMax: 5000,
+          timeout: 20000,
+          transports: ['websocket'],
+          forceNew: true,
+          withCredentials: true,
+          autoConnect: true
         });
+
         socketRef.current = socket;
+
         socket.on('connect', () => {
           console.log('Socket connected:', socket?.id);
           setError('');
           setIsSocketConnected(true);
         });
+
         socket.on('disconnect', (reason) => {
-            console.log('Socket disconnected:', reason);
-            setError('Socket disconnected. Trying to reconnect...');
-            setIsSocketConnected(false);
-            stopCamera();
-        });
-        socket.on('connect_error', (err: Error) => {
-          console.error('Socket connection error:', err);
-          setError(`Connection error: ${err.message}`);
+          console.log('Socket disconnected:', reason);
+          setError('Socket disconnected. Trying to reconnect...');
           setIsSocketConnected(false);
           stopCamera();
         });
+
+        socket.on('connect_error', (err: Error) => {
+          console.error('Socket connection error:', err);
+          setError(`Connection error: ${err.message}. Retrying...`);
+          setIsSocketConnected(false);
+          stopCamera();
+        });
+
+        socket.on('reconnect_attempt', (attemptNumber) => {
+          console.log('Reconnection attempt:', attemptNumber);
+          setError(`Connection lost. Attempting to reconnect (${attemptNumber})...`);
+        });
+
+        socket.on('reconnect', () => {
+          console.log('Socket reconnected');
+          setError('');
+          setIsSocketConnected(true);
+        });
+
+        socket.on('reconnect_failed', () => {
+          console.error('Socket reconnection failed');
+          setError('Failed to reconnect. Please refresh the page.');
+          setIsSocketConnected(false);
+        });
+
       } catch (err) {
         console.error('Error initializing socket:', err);
         setError('Failed to initialize connection');
@@ -64,6 +94,7 @@ export default function CameraPage() {
         stopCamera();
       }
     };
+
     initSocket();
     return () => {
       stopCamera();

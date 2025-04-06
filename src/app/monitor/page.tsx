@@ -28,16 +28,15 @@ export default function MonitorPage() {
           path: '/api/socket',
           addTrailingSlash: false,
           reconnection: true,
-          reconnectionAttempts: 5,
+          reconnectionAttempts: Infinity,
           reconnectionDelay: 1000,
-          timeout: 10000,
+          reconnectionDelayMax: 5000,
+          timeout: 20000,
           transports: ['websocket'],
           forceNew: true,
           withCredentials: true,
-          autoConnect: false
+          autoConnect: true
         });
-
-        socket.connect();
 
         socketRef.current = socket;
 
@@ -50,15 +49,9 @@ export default function MonitorPage() {
 
         socket.on('connect_error', (err: Error) => {
           console.error('Socket connection error:', err);
-          setError(`Connection error: ${err.message}. Make sure the camera is running and accessible.`);
+          setError(`Connection error: ${err.message}. Retrying...`);
           setIsConnected(false);
           setIsReconnecting(true);
-
-          setTimeout(() => {
-            if (socket && !socket.connected) {
-              socket.connect();
-            }
-          }, 2000);
         });
 
         socket.on('disconnect', (reason: string) => {
@@ -70,10 +63,17 @@ export default function MonitorPage() {
           }
         });
 
-        socket.on('reconnecting', (attemptNumber: number) => {
-          console.log('Attempting to reconnect:', attemptNumber);
+        socket.on('reconnect_attempt', (attemptNumber: number) => {
+          console.log('Reconnection attempt:', attemptNumber);
           setIsReconnecting(true);
-          setError(`Attempting to reconnect... (${attemptNumber}/5)`);
+          setError(`Attempting to reconnect... (${attemptNumber})`);
+        });
+
+        socket.on('reconnect', () => {
+          console.log('Socket reconnected');
+          setIsConnected(true);
+          setError('');
+          setIsReconnecting(false);
         });
 
         socket.on('reconnect_failed', () => {
