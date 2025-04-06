@@ -1,103 +1,206 @@
-import type { NextAuthOptions } from 'next-auth'
-import CredentialsProvider from 'next-auth/providers/credentials'
+import type { AuthOptions, User, DefaultSession, Session } from 'next-auth'
+import type { AdapterUser } from "next-auth/adapters"
+import type { JWT } from "next-auth/jwt"
+import Credentials from 'next-auth/providers/credentials'
 import bcrypt from 'bcrypt'
-import fs from 'fs'
-import path from 'path'
+import { v4 as uuidv4 } from 'uuid'
+import Redis from 'ioredis'
 
-// Path to the users JSON file
-const usersFilePath = path.join(process.cwd(), 'src/app/api/auth/users.json')
+// Initialize Redis client
+// Ensure REDIS_URL is set in your environment variables (.env.local for development)
+const redisUrl = process.env.REDIS_URL
+if (!redisUrl) {
+  console.error('REDIS_URL environment variable is not set.')
+  // In a real app, you might throw an error or handle this more gracefully
+  // For now, we log and potentially let it fail later if Redis is required.
+}
+const redis = redisUrl ? new Redis(redisUrl) : null
 
-// Function to read users from file
-function readUsers() {
+console.log(redis ? 'Redis client initialized.' : 'Redis client initialization failed: REDIS_URL not found.')
+
+if (redis) {
+  console.log('Redis client initialized.')
+  redis.on('error', (err) => console.error('Redis Client Error', err))
+  redis.on('connect', () => console.log('Redis connected.'))
+  redis.on('reconnecting', () => console.log('Redis reconnecting.'))
+  redis.on('end', () => console.log('Redis connection ended.'))
+} else {
+  console.error('Redis client initialization failed: REDIS_URL not found.')
+}
+
+// Define the structure for user data stored in Redis
+// We store the hashed password and the user ID
+interface StoredUser {
+  id: string
+  hashedPassword: string
+}
+
+/**
+ * Retrieves user details from Redis by username.
+ * Returns null if the user is not found or Redis is unavailable.
+ */
+export async function getUserByUsername(username: string): Promise<(User & StoredUser) | null> {
+  if (!redis) {
+    console.error('Redis client not available in getUserByUsername')
+    return null
+  }
   try {
-    const data = fs.readFileSync(usersFilePath, 'utf-8')
-    return JSON.parse(data)
+    const userDataString = await redis.get(`user:${username}`)
+    if (!userDataString) {
+      return null
+    }
+    const userData: StoredUser = JSON.parse(userDataString)
+    // Construct the User object expected by NextAuth
+    return {
+      id: userData.id,
+      username: username,
+      hashedPassword: userData.hashedPassword,
+      name: username
+    }
   } catch (error) {
-    return []
+    console.error('Redis error getting user:', error)
+    return null
   }
 }
 
-// Function to write users to file
-function writeUsers(users: any[]) {
-  fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2))
+/**
+ * Adds a new user to Redis.
+ * Returns the new user object (without password) or null on failure/if user exists.
+ */
+export async function addUser(username: string, password: string): Promise<User | null> {
+  if (!redis) {
+    console.error('Redis client not available in addUser')
+    return null
+  }
+  try {
+    // Check if user already exists using EXISTS command for efficiency
+    const exists = await redis.exists(`user:${username}`)
+    if (exists) {
+      console.log(`Attempted to add existing user: ${username}`)
+      return null // User already exists
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10)
+    const userId = uuidv4()
+    const newUser: StoredUser = {
+      id: userId,
+      hashedPassword: hashedPassword,
+    }
+
+    // Store the user data as a JSON string
+    await redis.set(`user:${username}`, JSON.stringify(newUser))
+    console.log(`User ${username} added successfully with ID ${userId}`)
+
+    // Return the user object compatible with NextAuth (excluding password)
+    return {
+      id: userId,
+      username: username,
+      name: username
+    }
+  } catch (error) {
+    console.error('Redis error adding user:', error)
+    return null
+  }
 }
 
-// Initialize users from file
-export const users = new Map<string, { id: string; email: string; password: string }>(
-  readUsers().map((user: any) => [user.email, user])
-)
-
-// Function to add a user
-export function addUser(user: { id: string; email: string; password: string }) {
-  users.set(user.email, user)
-  writeUsers(Array.from(users.values()))
+// Ensure NEXTAUTH_SECRET is set
+if (!process.env.NEXTAUTH_SECRET) {
+  console.error('NEXTAUTH_SECRET environment variable is not set.')
+  // In a real app, you might throw an error or handle this more gracefully
 }
 
-export const authOptions: NextAuthOptions = {
+export const authOptions: AuthOptions = {
+  pages: {
+    signIn: '/auth/signin',
+  },
   providers: [
-    CredentialsProvider({
-      name: 'Credentials',
+    Credentials({
+      // Define the fields expected in the credentials object
       credentials: {
-        email: { label: "Email", type: "email" },
+        username: { label: "Username", type: "text", placeholder: "jsmith" },
         password: { label: "Password", type: "password" }
       },
       async authorize(credentials) {
-        try {
-          console.log('Auth attempt for email:', credentials?.email)
-          console.log('Current users:', Array.from(users.keys()))
-
-          if (!credentials?.email || !credentials?.password) {
-            console.log('Missing credentials')
-            throw new Error('Email and password are required')
-          }
-
-          const user = users.get(credentials.email)
-          if (!user) {
-            console.log('User not found:', credentials.email)
-            throw new Error('Invalid email or password')
-          }
-
-          const isValid = await bcrypt.compare(credentials.password, user.password)
-          if (!isValid) {
-            console.log('Invalid password for user:', credentials.email)
-            throw new Error('Invalid email or password')
-          }
-
-          console.log('Authentication successful for user:', user.email)
-          return {
-            id: user.id,
-            email: user.email,
-          }
-        } catch (error) {
-          console.error('Auth error:', error)
-          throw error
+        if (!redis) {
+          console.error('Redis client not available during authorization')
+          return null
         }
-      }
-    })
+        const username = credentials?.username
+        const password = credentials?.password
+
+        if (!username || !password) {
+          console.log('Authorize failed: Missing username or password')
+          return null
+        }
+
+        console.log(`Attempting authorization for user: ${username}`)
+        const user = await getUserByUsername(username)
+
+        if (!user) {
+          console.log(`Authorization failed: User not found - ${username}`)
+          return null
+        }
+
+        const passwordsMatch = await bcrypt.compare(
+          password,
+          user.hashedPassword
+        )
+
+        if (passwordsMatch) {
+          console.log(`Authorization successful for user: ${username}`)
+          const { hashedPassword, ...userWithoutPassword } = user
+          return {
+            ...userWithoutPassword,
+            username: username, // Ensure username is included
+          }
+        } else {
+          console.log(`Authorization failed: Invalid password for user - ${username}`)
+          return null
+        }
+      },
+    }),
   ],
-  pages: {
-    signIn: '/auth/signin',
-    error: '/auth/signin',
-  },
-  session: {
-    strategy: 'jwt',
-    maxAge: 30 * 24 * 60 * 60, // 30 days
-  },
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id
-        token.email = user.email
+        token.username = user.username
       }
       return token
     },
     async session({ session, token }) {
       if (session.user) {
-        session.user.id = token.id as string
-        session.user.email = token.email as string
+        session.user.id = token.id
+        session.user.username = token.username
       }
       return session
-    }
+    },
   },
-  debug: process.env.NODE_ENV === 'development',
+  session: {
+    strategy: 'jwt',
+  },
+  secret: process.env.NEXTAUTH_SECRET,
+  // debug: process.env.NODE_ENV === 'development', // Optional: Enable debug logs in dev
+}
+
+// Augment NextAuth types
+declare module 'next-auth' {
+  interface Session extends DefaultSession {
+    user?: {
+      id?: string;
+      username?: string;
+    } & DefaultSession['user'];
+  }
+
+  interface User {
+    id: string;
+    username?: string | null;
+  }
+}
+
+declare module 'next-auth/jwt' {
+  interface JWT {
+    id?: string;
+    username?: string;
+  }
 }

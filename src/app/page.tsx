@@ -19,15 +19,6 @@ export default function Home() {
         <div>Loading...</div>
       ) : session ? (
         <>
-          <div className="text-center">
-            <p className="text-muted-foreground">Signed in as {session.user?.email}</p>
-            <button
-              onClick={() => signOut()}
-              className="mt-2 text-primary hover:underline"
-            >
-              Sign out
-            </button>
-          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-3xl">
             <Link
