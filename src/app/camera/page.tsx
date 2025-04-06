@@ -1,14 +1,14 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { io } from 'socket.io-client'
+import { io, Socket } from 'socket.io-client'
 import Link from 'next/link'
 
 export default function CameraPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const socketRef = useRef<any>(null)
+  const socketRef = useRef<Socket | null>(null)
   const [error, setError] = useState<string>('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [isMobile] = useState(() => {
@@ -19,24 +19,48 @@ export default function CameraPage() {
   })
 
   useEffect(() => {
-    const socketUrl = typeof window !== 'undefined' ? window.location.origin : ''
-    socketRef.current = io(socketUrl, {
-      path: '/api/socket',
-      addTrailingSlash: false,
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-      timeout: 10000,
-      transports: ['websocket', 'polling'],
-      withCredentials: true
-    })
+    let socket: Socket | null = null;
+
+    const initSocket = () => {
+      try {
+        if (typeof window === 'undefined') return;
+
+        const socketUrl = window.location.origin;
+        console.log('Connecting to socket server at:', socketUrl);
+
+        socket = io(socketUrl, {
+          path: '/api/socket',
+          addTrailingSlash: false,
+          reconnection: true,
+          reconnectionAttempts: 5,
+          reconnectionDelay: 1000,
+          timeout: 10000,
+          transports: ['websocket', 'polling'],
+          withCredentials: true
+        });
+
+        socketRef.current = socket;
+
+        socket.on('connect_error', (err: Error) => {
+          console.error('Socket connection error:', err);
+          setError(`Connection error: ${err.message}`);
+        });
+      } catch (err) {
+        console.error('Error initializing socket:', err);
+        setError('Failed to initialize connection');
+      }
+    };
+
+    initSocket();
 
     return () => {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop())
       }
-      if (socketRef.current) {
-        socketRef.current.disconnect()
+      if (socket) {
+        socket.disconnect();
+        socket.removeAllListeners();
+        socketRef.current = null;
       }
     }
   }, [])
