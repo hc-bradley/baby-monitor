@@ -16,9 +16,14 @@ try {
     throw new Error('REDIS_URL is required for authentication')
   }
 
+  // Log the Redis URL (without sensitive parts) for debugging
+  const maskedUrl = redisUrl.replace(/(redis:\/\/[^:]+):([^@]+)@/, '$1:****@')
+  console.log('Connecting to Redis at:', maskedUrl)
+
   redis = new Redis(redisUrl, {
     retryStrategy: (times) => {
       const delay = Math.min(times * 50, 2000)
+      console.log(`Redis connection attempt ${times}, retrying in ${delay}ms`)
       return delay
     },
     maxRetriesPerRequest: 3,
@@ -144,6 +149,7 @@ export const authConfig: AuthOptions = {
       async authorize(credentials) {
         try {
           if (!credentials?.username || !credentials?.password) {
+            console.error('Missing credentials in authorize')
             throw new Error('Missing credentials')
           }
 
@@ -152,16 +158,21 @@ export const authConfig: AuthOptions = {
             throw new Error('Authentication service unavailable')
           }
 
+          console.log(`Attempting to authenticate user: ${credentials.username}`)
           const user = await getUserByUsername(credentials.username)
+
           if (!user) {
+            console.error(`User not found: ${credentials.username}`)
             throw new Error('Invalid username or password')
           }
 
           const isValid = await bcrypt.compare(credentials.password, user.hashedPassword)
           if (!isValid) {
+            console.error(`Invalid password for user: ${credentials.username}`)
             throw new Error('Invalid username or password')
           }
 
+          console.log(`Successfully authenticated user: ${credentials.username}`)
           return {
             id: user.id,
             username: credentials.username
@@ -206,7 +217,8 @@ export const authConfig: AuthOptions = {
   session: {
     strategy: "jwt"
   },
-  debug: process.env.NODE_ENV === 'development'
+  debug: true, // Enable debug logs in production to help diagnose issues
+  secret: process.env.NEXTAUTH_SECRET
 }
 
 // Augment NextAuth types
