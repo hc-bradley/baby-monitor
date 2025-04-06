@@ -2,11 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import type { Socket } from 'socket.io-client'
+import Pusher from 'pusher-js'
+import type { Channel } from 'pusher-js'
 
 export default function MonitorPage() {
   const imageRef = useRef<HTMLImageElement>(null)
-  const socketRef = useRef<Socket | null>(null)
+  const pusherRef = useRef<Pusher | null>(null)
+  const channelRef = useRef<Channel | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [error, setError] = useState<string>('')
@@ -14,99 +16,60 @@ export default function MonitorPage() {
   const [hasReceivedFrame, setHasReceivedFrame] = useState(false)
 
   useEffect(() => {
-    let socket: Socket | null = null;
+    if (typeof window === 'undefined') return;
 
-    const connectSocket = async () => {
-      try {
-        if (typeof window === 'undefined') return;
+    const pusher = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
+      cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
+      forceTLS: true
+    });
 
-        const socketUrl = window.location.origin;
-        console.log('Connecting to socket server at:', socketUrl);
+    pusherRef.current = pusher;
 
-        const io = (await import('socket.io-client')).io;
-        socket = io(socketUrl, {
-          path: '/api/socket',
-          addTrailingSlash: false,
-          reconnection: true,
-          reconnectionAttempts: Infinity,
-          reconnectionDelay: 1000,
-          reconnectionDelayMax: 5000,
-          timeout: 20000,
-          transports: ['websocket'],
-          forceNew: true,
-          withCredentials: true,
-          autoConnect: true
-        });
+    // Subscribe to the camera feed channel
+    const channel = pusher.subscribe('camera-feed');
+    channelRef.current = channel;
 
-        socketRef.current = socket;
+    pusher.connection.bind('connected', () => {
+      console.log('Pusher connected');
+      setIsConnected(true);
+      setError('');
+      setIsReconnecting(false);
+    });
 
-        socket.on('connect', () => {
-          console.log('Socket connected:', socket?.id);
-          setIsConnected(true);
-          setError('');
-          setIsReconnecting(false);
-        });
+    pusher.connection.bind('disconnected', () => {
+      console.log('Pusher disconnected');
+      setIsConnected(false);
+      setIsReconnecting(true);
+    });
 
-        socket.on('connect_error', (err: Error) => {
-          console.error('Socket connection error:', err);
-          setError(`Connection error: ${err.message}. Retrying...`);
-          setIsConnected(false);
-          setIsReconnecting(true);
-        });
+    pusher.connection.bind('error', (err: any) => {
+      console.error('Pusher error:', err);
+      setError(`Connection error: ${err.message}. Retrying...`);
+      setIsConnected(false);
+      setIsReconnecting(true);
+    });
 
-        socket.on('disconnect', (reason: string) => {
-          console.log('Socket disconnected:', reason);
-          setIsConnected(false);
-          if (reason === 'io server disconnect') {
-            setIsReconnecting(true);
-            socket?.connect();
-          }
-        });
-
-        socket.on('reconnect_attempt', (attemptNumber: number) => {
-          console.log('Reconnection attempt:', attemptNumber);
-          setIsReconnecting(true);
-          setError(`Attempting to reconnect... (${attemptNumber})`);
-        });
-
-        socket.on('reconnect', () => {
-          console.log('Socket reconnected');
-          setIsConnected(true);
-          setError('');
-          setIsReconnecting(false);
-        });
-
-        socket.on('reconnect_failed', () => {
-          console.log('Reconnection failed');
-          setIsReconnecting(false);
-          setError('Failed to connect to the camera. Please refresh the page or check if the camera is running.');
-        });
-
-        socket.on('camera-frame', (frameData: string) => {
-          console.log('Received frame data');
-          if (imageRef.current) {
-            try {
-              imageRef.current.src = frameData;
-              setLastUpdate(new Date());
-              setHasReceivedFrame(true);
-            } catch (err) {
-              console.error('Error setting frame data:', err);
-            }
-          }
-        });
-      } catch (err) {
-        console.error('Error setting up socket:', err);
-        setError('Failed to initialize connection. Please refresh the page.');
+    channel.bind('camera-frame', (data: string) => {
+      console.log('Received frame data');
+      if (imageRef.current) {
+        try {
+          imageRef.current.src = data;
+          setLastUpdate(new Date());
+          setHasReceivedFrame(true);
+        } catch (err) {
+          console.error('Error setting frame data:', err);
+        }
       }
-    };
-
-    connectSocket();
+    });
 
     return () => {
-      if (socket) {
-        socket.disconnect();
-        socket.removeAllListeners();
-        socketRef.current = null;
+      if (channelRef.current) {
+        channelRef.current.unbind_all();
+        channelRef.current = null;
+      }
+      if (pusherRef.current) {
+        pusherRef.current.disconnect();
+        pusherRef.current = null;
       }
     };
   }, []);
@@ -121,7 +84,7 @@ export default function MonitorPage() {
           ← Back
         </Link>
         <h1 className="text-2xl font-bold">Monitor Mode</h1>
-        <div className="w-[60px]" /> {/* Spacer for alignment */}
+        <div className="w-[60px]" />
       </div>
 
       <div className="relative w-full max-w-3xl aspect-video bg-black rounded-lg overflow-hidden">

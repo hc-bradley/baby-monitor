@@ -2,19 +2,21 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import Link from 'next/link'
-import type { Socket } from 'socket.io-client'
+import Pusher from 'pusher-js'
+import type { Channel } from 'pusher-js'
 
 export default function CameraPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const socketRef = useRef<Socket | null>(null)
+  const pusherRef = useRef<Pusher | null>(null)
+  const channelRef = useRef<Channel | null>(null)
   const frameTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [error, setError] = useState<string>('')
   const [isAttemptingStreaming, setIsAttemptingStreaming] = useState(false);
   const [videoTrack, setVideoTrack] = useState<MediaStreamTrack | null>(null);
-  const [isSocketConnected, setIsSocketConnected] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
   const [isMobile] = useState(() => {
     if (typeof window !== 'undefined') {
       return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
@@ -22,91 +24,115 @@ export default function CameraPage() {
     return false
   })
 
-  // Derived state for UI feedback (more accurate)
-  const isActuallyStreaming = isAttemptingStreaming && videoTrack !== null && isSocketConnected;
+  // Derived state for UI feedback
+  const isActuallyStreaming = isAttemptingStreaming && videoTrack !== null && isConnected;
 
-  // Effect to initialize socket connection
+  // Effect to initialize Pusher connection
   useEffect(() => {
-    let socket: Socket | null = null;
-    const initSocket = async () => {
-      try {
-        if (typeof window === 'undefined') return;
-        const socketUrl = window.location.origin;
-        console.log('Connecting to socket server at:', socketUrl);
-        const io = (await import('socket.io-client')).io;
-        socket = io(socketUrl, {
-          path: '/api/socket',
-          addTrailingSlash: false,
-          reconnection: true,
-          reconnectionAttempts: Infinity,
-          reconnectionDelay: 1000,
-          reconnectionDelayMax: 5000,
-          timeout: 20000,
-          transports: ['websocket'],
-          forceNew: true,
-          withCredentials: true,
-          autoConnect: true
-        });
+    if (typeof window === 'undefined') return;
 
-        socketRef.current = socket;
+    const pusher = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
+      cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
+      forceTLS: true
+    });
 
-        socket.on('connect', () => {
-          console.log('Socket connected:', socket?.id);
-          setError('');
-          setIsSocketConnected(true);
-        });
+    pusherRef.current = pusher;
 
-        socket.on('disconnect', (reason) => {
-          console.log('Socket disconnected:', reason);
-          setError('Socket disconnected. Trying to reconnect...');
-          setIsSocketConnected(false);
-          stopCamera();
-        });
+    pusher.connection.bind('connected', () => {
+      console.log('Pusher connected');
+      setError('');
+      setIsConnected(true);
+    });
 
-        socket.on('connect_error', (err: Error) => {
-          console.error('Socket connection error:', err);
-          setError(`Connection error: ${err.message}. Retrying...`);
-          setIsSocketConnected(false);
-          stopCamera();
-        });
+    pusher.connection.bind('disconnected', () => {
+      console.log('Pusher disconnected');
+      setError('Connection lost. Trying to reconnect...');
+      setIsConnected(false);
+      stopCamera();
+    });
 
-        socket.on('reconnect_attempt', (attemptNumber) => {
-          console.log('Reconnection attempt:', attemptNumber);
-          setError(`Connection lost. Attempting to reconnect (${attemptNumber})...`);
-        });
+    pusher.connection.bind('error', (err: any) => {
+      console.error('Pusher error:', err);
+      setError(`Connection error: ${err.message}. Retrying...`);
+      setIsConnected(false);
+      stopCamera();
+    });
 
-        socket.on('reconnect', () => {
-          console.log('Socket reconnected');
-          setError('');
-          setIsSocketConnected(true);
-        });
-
-        socket.on('reconnect_failed', () => {
-          console.error('Socket reconnection failed');
-          setError('Failed to reconnect. Please refresh the page.');
-          setIsSocketConnected(false);
-        });
-
-      } catch (err) {
-        console.error('Error initializing socket:', err);
-        setError('Failed to initialize connection');
-        setIsSocketConnected(false);
-        stopCamera();
+    return () => {
+      if (pusherRef.current) {
+        pusherRef.current.disconnect();
+        pusherRef.current = null;
+      }
+      if (channelRef.current) {
+        channelRef.current.unbind_all();
+        channelRef.current = null;
       }
     };
+  }, []);
 
-    initSocket();
-    return () => {
-      stopCamera();
-      if (socketRef.current) {
-        console.log('Disconnecting socket on unmount...');
-        socketRef.current.disconnect();
-        socketRef.current.removeAllListeners();
-        socketRef.current = null;
-        setIsSocketConnected(false);
+  // Function to send frame data
+  const sendFrame = useCallback(async (frameData: string) => {
+    if (!isAttemptingStreaming || !videoTrack || !isConnected) return;
+
+    try {
+      const response = await fetch('/api/socket', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          channel: 'camera-feed',
+          event: 'camera-frame',
+          data: frameData
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to send frame');
+      }
+    } catch (err) {
+      console.error('Error sending frame:', err);
+    }
+  }, [isAttemptingStreaming, videoTrack, isConnected]);
+
+  // Recursive frame sending loop
+  const sendFrameLoop = useCallback(async () => {
+    if (!isAttemptingStreaming || !videoTrack || !isConnected) {
+      console.log('sendFrameLoop: Stopping condition met.');
+      if (frameTimerRef.current) clearTimeout(frameTimerRef.current);
+      frameTimerRef.current = null;
+      return;
+    }
+
+    try {
+      const blob = await captureFrame(videoTrack);
+      if (blob) {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (isAttemptingStreaming && videoTrack && isConnected && reader.result) {
+            sendFrame(reader.result as string);
+            frameTimerRef.current = setTimeout(sendFrameLoop, 50);
+          } else {
+            console.log('sendFrameLoop: Conditions changed before emit/schedule, stopping this path.');
+            if (frameTimerRef.current) clearTimeout(frameTimerRef.current);
+            frameTimerRef.current = null;
+          }
+        };
+        reader.onerror = () => {
+          console.error('FileReader error, attempting next frame...');
+          if (isAttemptingStreaming && videoTrack && isConnected) {
+            frameTimerRef.current = setTimeout(sendFrameLoop, 50);
+          }
+        };
+        reader.readAsDataURL(blob);
+      }
+    } catch (err) {
+      console.error('Error in sendFrameLoop:', err);
+      if (isAttemptingStreaming && videoTrack && isConnected) {
+        frameTimerRef.current = setTimeout(sendFrameLoop, 50);
       }
     }
-  }, [])
+  }, [isAttemptingStreaming, videoTrack, isConnected, sendFrame]);
 
   // Capture frame function
   const captureFrame = useCallback(async (track: MediaStreamTrack | null) => {
@@ -151,62 +177,9 @@ export default function CameraPage() {
     }
   }, []); // No dependencies, safe
 
-  // Recursive frame sending loop
-  const sendFrameLoop = useCallback(async () => {
-    // Check conditions using state
-    if (!isAttemptingStreaming || !videoTrack || !isSocketConnected) {
-      console.log('sendFrameLoop: Stopping condition met.', { isAttemptingStreaming, videoTrack: !!videoTrack, isSocketConnected });
-      // Don't call stopCamera here, let the effect handle cleanup based on state change
-       if (frameTimerRef.current) clearTimeout(frameTimerRef.current);
-       frameTimerRef.current = null;
-      return;
-    }
-
-    try {
-      const blob = await captureFrame(videoTrack);
-      if (blob) {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          // Re-check conditions *just before* emitting and scheduling next frame
-          if (isAttemptingStreaming && videoTrack && isSocketConnected && reader.result) {
-            socketRef.current?.emit('camera-frame', reader.result as string);
-            // Schedule next frame with a shorter interval (50ms for ~20 FPS)
-            frameTimerRef.current = setTimeout(sendFrameLoop, 50);
-          } else {
-             console.log('sendFrameLoop: Conditions changed before emit/schedule, stopping this path.');
-              if (frameTimerRef.current) clearTimeout(frameTimerRef.current);
-              frameTimerRef.current = null;
-             // Do not call stopCamera here, rely on state changes
-          }
-        };
-        reader.onerror = () => {
-          console.error('FileReader error, attempting next frame...');
-          if (isAttemptingStreaming && videoTrack && isSocketConnected) {
-             // Retry with the shorter interval
-             frameTimerRef.current = setTimeout(sendFrameLoop, 50);
-          }
-        };
-        reader.readAsDataURL(blob);
-      } else {
-        // console.log('No valid frame captured, retrying...');
-        if (isAttemptingStreaming && videoTrack && isSocketConnected) {
-           // Retry with the shorter interval
-           frameTimerRef.current = setTimeout(sendFrameLoop, 50);
-        }
-      }
-    } catch (err) {
-      console.error('Error in sendFrameLoop:', err);
-       if (isAttemptingStreaming && videoTrack && isSocketConnected) {
-         // Retry with the shorter interval
-         frameTimerRef.current = setTimeout(sendFrameLoop, 50);
-       }
-    }
-  // Dependencies that influence the loop's behavior or recreation
-  }, [isAttemptingStreaming, videoTrack, isSocketConnected, captureFrame]);
-
   // Effect to manage the start/stop of the frame sending loop
   useEffect(() => {
-    if (isAttemptingStreaming && videoTrack && isSocketConnected) {
+    if (isAttemptingStreaming && videoTrack && isConnected) {
       console.log('>>> Effect: Starting sendFrameLoop because conditions met <<< ');
       // Clear any existing timer before starting a new loop instance
       if (frameTimerRef.current) {
@@ -214,7 +187,7 @@ export default function CameraPage() {
       }
       sendFrameLoop(); // Start the loop
     } else {
-       console.log('>>> Effect: Conditions NOT met, ensuring loop is stopped <<< ', {isAttemptingStreaming, videoTrack:!!videoTrack, isSocketConnected});
+       console.log('>>> Effect: Conditions NOT met, ensuring loop is stopped <<< ', {isAttemptingStreaming, videoTrack:!!videoTrack, isConnected});
        // If conditions aren't met, ensure any stray timer is cleared.
        // stopCamera also clears it, but this adds robustness.
        if (frameTimerRef.current) {
@@ -232,7 +205,7 @@ export default function CameraPage() {
       }
     };
   // Dependencies: The effect should re-run if the intent, track, connection status, or loop function changes
-  }, [isAttemptingStreaming, videoTrack, isSocketConnected, sendFrameLoop]);
+  }, [isAttemptingStreaming, videoTrack, isConnected, sendFrameLoop]);
 
   // Start camera function
   const startCamera = async () => {
@@ -243,7 +216,7 @@ export default function CameraPage() {
 
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera access not supported');
-      if (!isSocketConnected) throw new Error('Socket not connected');
+      if (!isConnected) throw new Error('Pusher not connected');
 
       // Ensure previous stream is stopped
       if (streamRef.current) {
@@ -301,7 +274,7 @@ export default function CameraPage() {
         {/* Use isActuallyStreaming for overlay text, provides better feedback */}
         {!isActuallyStreaming && (
            <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white font-semibold">
-             { !isSocketConnected ? 'Connecting...' :
+             { !isConnected ? 'Connecting...' :
                error ? 'Error Occurred' :
                isAttemptingStreaming ? 'Starting Camera...':
                'Press Start Camera' }
@@ -311,7 +284,7 @@ export default function CameraPage() {
       <div className="flex gap-4">
         <button
           onClick={startCamera}
-          disabled={isAttemptingStreaming || !isSocketConnected} // Disable if trying or not connected
+          disabled={isAttemptingStreaming || !isConnected} // Disable if trying or not connected
           className="px-6 py-3 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {/* More descriptive button text */}
