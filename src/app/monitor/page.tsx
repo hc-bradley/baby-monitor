@@ -14,20 +14,31 @@ export default function MonitorPage() {
   const [error, setError] = useState<string>('')
   const [isReconnecting, setIsReconnecting] = useState(false)
   const [hasReceivedFrame, setHasReceivedFrame] = useState(false)
+  const [connectionState, setConnectionState] = useState<string>('initializing')
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    console.log('Initializing Pusher with key:', process.env.NEXT_PUBLIC_PUSHER_KEY);
+    console.log('Using cluster:', process.env.NEXT_PUBLIC_PUSHER_CLUSTER);
+
     const pusher = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
       cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
-      forceTLS: true
+      forceTLS: true,
+      enabledTransports: ['ws', 'wss']
     });
 
     pusherRef.current = pusher;
 
     // Subscribe to the camera feed channel
+    console.log('Subscribing to camera-feed channel');
     const channel = pusher.subscribe('camera-feed');
     channelRef.current = channel;
+
+    pusher.connection.bind('state_change', (states: { current: string, previous: string }) => {
+      console.log('Pusher state changed:', states);
+      setConnectionState(states.current);
+    });
 
     pusher.connection.bind('connected', () => {
       console.log('Pusher connected');
@@ -60,6 +71,15 @@ export default function MonitorPage() {
           console.error('Error setting frame data:', err);
         }
       }
+    });
+
+    channel.bind('pusher:subscription_succeeded', () => {
+      console.log('Successfully subscribed to camera-feed channel');
+    });
+
+    channel.bind('pusher:subscription_error', (err: any) => {
+      console.error('Failed to subscribe to camera-feed channel:', err);
+      setError(`Failed to subscribe to camera feed: ${err.message}`);
     });
 
     return () => {
@@ -100,7 +120,7 @@ export default function MonitorPage() {
 
         {(!isConnected || !hasReceivedFrame) && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white">
-            {!isConnected ? 'Connecting to camera...' :
+            {!isConnected ? `Connecting to camera... (${connectionState})` :
              isReconnecting ? 'Reconnecting to camera...' :
              'Waiting for video feed...'}
           </div>

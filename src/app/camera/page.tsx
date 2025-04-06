@@ -12,11 +12,12 @@ export default function CameraPage() {
   const pusherRef = useRef<Pusher | null>(null)
   const channelRef = useRef<Channel | null>(null)
   const frameTimerRef = useRef<NodeJS.Timeout | null>(null);
-
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [isConnected, setIsConnected] = useState(false)
   const [error, setError] = useState<string>('')
-  const [isAttemptingStreaming, setIsAttemptingStreaming] = useState(false);
-  const [videoTrack, setVideoTrack] = useState<MediaStreamTrack | null>(null);
-  const [isConnected, setIsConnected] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false)
+  const [connectionState, setConnectionState] = useState<string>('initializing')
+  const [frameCount, setFrameCount] = useState(0)
   const [isMobile] = useState(() => {
     if (typeof window !== 'undefined') {
       return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
@@ -25,288 +26,233 @@ export default function CameraPage() {
   })
 
   // Derived state for UI feedback
-  const isActuallyStreaming = isAttemptingStreaming && videoTrack !== null && isConnected;
+  const isActuallyStreaming = isStreaming && streamRef.current !== null && isConnected;
 
-  // Effect to initialize Pusher connection
+  const sendFrame = useCallback(() => {
+    if (!canvasRef.current || !videoRef.current || !channelRef.current || !isConnected) {
+      console.log('Cannot send frame:', {
+        hasCanvas: !!canvasRef.current,
+        hasVideo: !!videoRef.current,
+        hasChannel: !!channelRef.current,
+        isConnected
+      });
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    const channel = channelRef.current;
+
+    try {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        console.error('Failed to get canvas context');
+        return;
+      }
+
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const frameData = canvas.toDataURL('image/jpeg', 0.5);
+
+      console.log(`Sending frame ${frameCount + 1}`);
+      channel.trigger('camera-frame', frameData);
+      setFrameCount(prev => prev + 1);
+    } catch (err) {
+      console.error('Error sending frame:', err);
+    }
+  }, [isConnected, frameCount]);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    console.log('Initializing Pusher with key:', process.env.NEXT_PUBLIC_PUSHER_KEY);
+    console.log('Using cluster:', process.env.NEXT_PUBLIC_PUSHER_CLUSTER);
+
     const pusher = new Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
       cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
-      forceTLS: true
+      forceTLS: true,
+      enabledTransports: ['ws', 'wss']
     });
 
     pusherRef.current = pusher;
 
+    // Subscribe to the camera feed channel
+    console.log('Subscribing to camera-feed channel');
+    const channel = pusher.subscribe('camera-feed');
+    channelRef.current = channel;
+
+    pusher.connection.bind('state_change', (states: { current: string, previous: string }) => {
+      console.log('Pusher state changed:', states);
+      setConnectionState(states.current);
+    });
+
     pusher.connection.bind('connected', () => {
       console.log('Pusher connected');
-      setError('');
       setIsConnected(true);
+      setError('');
+      setIsReconnecting(false);
     });
 
     pusher.connection.bind('disconnected', () => {
       console.log('Pusher disconnected');
-      setError('Connection lost. Trying to reconnect...');
       setIsConnected(false);
-      stopCamera();
+      setIsReconnecting(true);
     });
 
     pusher.connection.bind('error', (err: any) => {
       console.error('Pusher error:', err);
       setError(`Connection error: ${err.message}. Retrying...`);
       setIsConnected(false);
-      stopCamera();
+      setIsReconnecting(true);
+    });
+
+    channel.bind('pusher:subscription_succeeded', () => {
+      console.log('Successfully subscribed to camera-feed channel');
+    });
+
+    channel.bind('pusher:subscription_error', (err: any) => {
+      console.error('Failed to subscribe to camera-feed channel:', err);
+      setError(`Failed to subscribe to camera feed: ${err.message}`);
     });
 
     return () => {
-      if (pusherRef.current) {
-        pusherRef.current.disconnect();
-        pusherRef.current = null;
-      }
       if (channelRef.current) {
         channelRef.current.unbind_all();
         channelRef.current = null;
       }
+      if (pusherRef.current) {
+        pusherRef.current.disconnect();
+        pusherRef.current = null;
+      }
     };
   }, []);
 
-  // Function to send frame data
-  const sendFrame = useCallback(async (frameData: string) => {
-    if (!isAttemptingStreaming || !videoTrack || !isConnected) return;
-
-    try {
-      const response = await fetch('/api/socket', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          channel: 'camera-feed',
-          event: 'camera-frame',
-          data: frameData
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to send frame');
+  useEffect(() => {
+    if (!isStreaming || !isConnected) {
+      if (frameTimerRef.current) {
+        clearInterval(frameTimerRef.current);
+        frameTimerRef.current = null;
       }
-    } catch (err) {
-      console.error('Error sending frame:', err);
-    }
-  }, [isAttemptingStreaming, videoTrack, isConnected]);
-
-  // Recursive frame sending loop
-  const sendFrameLoop = useCallback(async () => {
-    if (!isAttemptingStreaming || !videoTrack || !isConnected) {
-      console.log('sendFrameLoop: Stopping condition met.');
-      if (frameTimerRef.current) clearTimeout(frameTimerRef.current);
-      frameTimerRef.current = null;
       return;
     }
 
-    try {
-      const blob = await captureFrame(videoTrack);
-      if (blob) {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          if (isAttemptingStreaming && videoTrack && isConnected && reader.result) {
-            sendFrame(reader.result as string);
-            frameTimerRef.current = setTimeout(sendFrameLoop, 50);
-          } else {
-            console.log('sendFrameLoop: Conditions changed before emit/schedule, stopping this path.');
-            if (frameTimerRef.current) clearTimeout(frameTimerRef.current);
-            frameTimerRef.current = null;
-          }
-        };
-        reader.onerror = () => {
-          console.error('FileReader error, attempting next frame...');
-          if (isAttemptingStreaming && videoTrack && isConnected) {
-            frameTimerRef.current = setTimeout(sendFrameLoop, 50);
-          }
-        };
-        reader.readAsDataURL(blob);
-      }
-    } catch (err) {
-      console.error('Error in sendFrameLoop:', err);
-      if (isAttemptingStreaming && videoTrack && isConnected) {
-        frameTimerRef.current = setTimeout(sendFrameLoop, 50);
-      }
-    }
-  }, [isAttemptingStreaming, videoTrack, isConnected, sendFrame]);
+    console.log('Starting frame capture');
+    frameTimerRef.current = setInterval(sendFrame, 1000 / 30); // 30 FPS
 
-  // Capture frame function
-  const captureFrame = useCallback(async (track: MediaStreamTrack | null) => {
-    if (!track || !videoRef.current || !canvasRef.current || videoRef.current.readyState < videoRef.current.HAVE_METADATA || videoRef.current.videoWidth === 0 || videoRef.current.videoHeight === 0) {
-      return null;
-    }
-    try {
-      const canvas = canvasRef.current;
-      const video = videoRef.current;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return null;
-      ctx.drawImage(video, 0, 0);
-      return new Promise<Blob | null>((resolve) => {
-        canvas.toBlob((blob) => {
-          resolve(blob && blob.size > 0 ? blob : null);
-        }, 'image/jpeg', 0.8);
-      });
-    } catch (err) {
-      console.error('Error capturing frame:', err);
-      return null;
-    }
-  }, []);
-
-   // Stop camera function (made stable with useCallback)
-  const stopCamera = useCallback(() => {
-    console.log('Stopping camera and clearing timer...');
-    setIsAttemptingStreaming(false);
-    setVideoTrack(null);
-
-    if (frameTimerRef.current) {
-      clearTimeout(frameTimerRef.current);
-      frameTimerRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-        videoRef.current.srcObject = null;
-    }
-  }, []); // No dependencies, safe
-
-  // Effect to manage the start/stop of the frame sending loop
-  useEffect(() => {
-    if (isAttemptingStreaming && videoTrack && isConnected) {
-      console.log('>>> Effect: Starting sendFrameLoop because conditions met <<< ');
-      // Clear any existing timer before starting a new loop instance
-      if (frameTimerRef.current) {
-        clearTimeout(frameTimerRef.current);
-      }
-      sendFrameLoop(); // Start the loop
-    } else {
-       console.log('>>> Effect: Conditions NOT met, ensuring loop is stopped <<< ', {isAttemptingStreaming, videoTrack:!!videoTrack, isConnected});
-       // If conditions aren't met, ensure any stray timer is cleared.
-       // stopCamera also clears it, but this adds robustness.
-       if (frameTimerRef.current) {
-         clearTimeout(frameTimerRef.current);
-         frameTimerRef.current = null;
-       }
-    }
-
-    // Cleanup function for the effect
     return () => {
-      console.log('>>> Effect Cleanup: Clearing frame timer <<< ');
       if (frameTimerRef.current) {
-        clearTimeout(frameTimerRef.current);
+        clearInterval(frameTimerRef.current);
         frameTimerRef.current = null;
       }
     };
-  // Dependencies: The effect should re-run if the intent, track, connection status, or loop function changes
-  }, [isAttemptingStreaming, videoTrack, isConnected, sendFrameLoop]);
+  }, [isStreaming, isConnected, sendFrame]);
 
-  // Start camera function
   const startCamera = async () => {
-    if (isAttemptingStreaming) return;
-    setError('');
-    setIsAttemptingStreaming(true); // Signal intent
-    console.log('Attempting to start camera...');
-
     try {
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera access not supported');
-      if (!isConnected) throw new Error('Pusher not connected');
+      console.log('Requesting camera access');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: isMobile ? { ideal: 'environment' } : undefined
+        }
+      });
 
-      // Ensure previous stream is stopped
-      if (streamRef.current) {
-          streamRef.current.getTracks().forEach(track => track.stop());
-          streamRef.current = null;
+      if (videoRef.current) {
+        console.log('Setting video stream');
+        videoRef.current.srcObject = stream;
+        streamRef.current = stream;
+        setIsStreaming(true);
       }
-       if (videoRef.current) videoRef.current.srcObject = null;
+    } catch (err) {
+      console.error('Error accessing camera:', err);
+      setError('Failed to access camera. Please make sure you have granted camera permissions.');
+    }
+  };
 
-      const constraints = { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: isMobile ? { ideal: 'environment' } : undefined }, audio: false };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      console.log('Camera stream obtained');
-
-      if (!videoRef.current) {
-        stream.getTracks().forEach(track => track.stop());
-        throw new Error('Video element not available');
-      }
-
-      streamRef.current = stream;
-      videoRef.current.srcObject = stream;
-
-      await new Promise<void>((resolve, reject) => {
-         if (!videoRef.current) return reject(new Error('Video ref lost'));
-         videoRef.current.onloadedmetadata = () => { console.log('onloadedmetadata fired'); resolve(); };
-         videoRef.current.onerror = (e) => reject(new Error(`Video metadata error: ${e}`));
-         setTimeout(() => reject(new Error('Video metadata load timed out')), 5000);
-       });
-      console.log('Video metadata loaded');
-
-      const track = stream.getVideoTracks()[0];
-      if (!track) throw new Error('No video track found');
-      setVideoTrack(track); // Set the track -> This will trigger the useEffect to start the loop
-
-    } catch (err: any) {
-      console.error('Camera start error:', err);
-      setError(`Failed to start camera: ${err.message || err.name}`);
-      stopCamera(); // Cleanup on error
+  const stopCamera = () => {
+    if (streamRef.current) {
+      console.log('Stopping camera stream');
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+      setIsStreaming(false);
     }
   };
 
   return (
-     <main className="min-h-screen p-4 flex flex-col items-center space-y-4">
-       <div className="w-full max-w-3xl flex justify-between items-center">
-        <Link href="/" className="text-primary hover:underline"> ← Back </Link>
+    <main className="min-h-screen p-4 flex flex-col items-center space-y-4">
+      <div className="w-full max-w-3xl flex justify-between items-center">
+        <Link
+          href="/"
+          className="text-primary hover:underline"
+        >
+          ← Back
+        </Link>
         <h1 className="text-2xl font-bold">Camera Mode</h1>
         <div className="w-[60px]" />
       </div>
+
       <div className="relative w-full max-w-3xl aspect-video bg-black rounded-lg overflow-hidden">
         <video
           ref={videoRef}
-          autoPlay playsInline muted
+          autoPlay
+          playsInline
+          muted
           className="w-full h-full object-cover"
-          onLoadedData={() => console.log('Video element loaded data')}
         />
-        <canvas ref={canvasRef} className="hidden" />
-        {/* Use isActuallyStreaming for overlay text, provides better feedback */}
+        <canvas
+          ref={canvasRef}
+          className="hidden"
+        />
         {!isActuallyStreaming && (
            <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white font-semibold">
              { !isConnected ? 'Connecting...' :
                error ? 'Error Occurred' :
-               isAttemptingStreaming ? 'Starting Camera...':
+               isStreaming ? 'Starting Camera...':
                'Press Start Camera' }
            </div>
         )}
       </div>
+
+      <div className="flex items-center gap-2">
+        <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+        <span className="text-sm text-muted-foreground">
+          {isConnected ? 'Connected' : 'Disconnected'}
+        </span>
+      </div>
+
+      {error && (
+        <div className="w-full max-w-3xl p-4 bg-destructive/10 text-destructive rounded-lg">
+          <p className="text-center">{error}</p>
+        </div>
+      )}
+
       <div className="flex gap-4">
         <button
           onClick={startCamera}
-          disabled={isAttemptingStreaming || !isConnected} // Disable if trying or not connected
-          className="px-6 py-3 bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={isStreaming}
+          className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50"
         >
-          {/* More descriptive button text */}
-          {isAttemptingStreaming && !videoTrack ? 'Starting...' : isActuallyStreaming ? 'Streaming...' : 'Start Camera'}
+          {isStreaming ? 'Streaming...' : 'Start Camera'}
         </button>
         <button
           onClick={stopCamera}
-          disabled={!isAttemptingStreaming} // Only enable stop if an attempt is active
-          className="px-6 py-3 bg-destructive text-destructive-foreground rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={!isStreaming}
+          className="px-4 py-2 bg-destructive text-destructive-foreground rounded-lg hover:bg-destructive/90 disabled:opacity-50"
         >
           Stop Camera
         </button>
       </div>
-      {error && (
-        <div className="w-full max-w-3xl p-4 bg-destructive/10 text-destructive rounded-lg">
-          <p className="text-center font-semibold">Error:</p>
-          <p className="text-center">{error}</p>
-        </div>
-      )}
+
       <p className="text-muted-foreground text-center max-w-md">
-         {isMobile ? "Using back camera." : "Using default camera."} Ensure good lighting and stable connection.
+        {isStreaming ? 'Camera is streaming. Open the monitor page to view the feed.' : 'Click "Start Camera" to begin streaming.'}
       </p>
+
+      <div className="text-sm text-muted-foreground">
+        <p>Connection state: {connectionState}</p>
+        <p>Frames sent: {frameCount}</p>
+      </div>
     </main>
   )
 }
