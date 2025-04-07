@@ -41,9 +41,9 @@ export default function MonitorPage() {
 
     pusherRef.current = pusher;
 
-    // Subscribe to the camera feed channel
-    console.log('Subscribing to camera-feed channel');
-    const channel = pusher.subscribe('camera-feed');
+    // Subscribe to the private camera feed channel
+    console.log('Subscribing to private-camera-feed channel');
+    const channel = pusher.subscribe('private-camera-feed');
     channelRef.current = channel;
 
     // Handle connection state changes
@@ -85,12 +85,12 @@ export default function MonitorPage() {
 
     // Enable client events
     channel.bind('pusher:subscription_succeeded', () => {
-      console.log('Successfully subscribed to camera-feed channel');
-      console.log('Client events enabled for camera-feed channel');
+      console.log('Successfully subscribed to private-camera-feed channel');
+      console.log('Client events enabled for private-camera-feed channel');
     });
 
     channel.bind('pusher:subscription_error', (err: any) => {
-      console.error('Failed to subscribe to camera-feed channel:', err);
+      console.error('Failed to subscribe to private-camera-feed channel:', err);
       setError(`Failed to subscribe to camera feed: ${err.message}`);
     });
 

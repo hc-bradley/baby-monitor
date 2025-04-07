@@ -13,53 +13,37 @@ export async function POST(req: Request) {
   try {
     const { socket_id, channel_name } = await req.json();
 
-    // Generate auth response for the channel
+    // Validate the channel name
+    if (!channel_name.startsWith('private-')) {
+      return NextResponse.json(
+        { error: 'Invalid channel name' },
+        { status: 400 }
+      );
+    }
+
+    // Get the user ID from the request
+    const user_id = req.headers.get('x-user-id') || 'anonymous';
+
+    // Generate the auth response
     const authResponse = pusher.authorizeChannel(socket_id, channel_name, {
-      user_id: socket_id, // Use socket_id as user_id for uniqueness
+      user_id,
       user_info: {
-        name: 'User'
+        name: user_id
       }
     });
 
     return NextResponse.json(authResponse);
   } catch (error) {
-    console.error('Error authorizing channel:', error);
+    console.error('Error in socket auth:', error);
     return NextResponse.json(
-      { error: 'Authorization failed' },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }
 }
 
-export async function GET(req: Request) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const socket_id = searchParams.get('socket_id');
-    const channel_name = searchParams.get('channel_name');
-
-    if (!socket_id || !channel_name) {
-      return NextResponse.json(
-        { error: 'Missing socket_id or channel_name' },
-        { status: 400 }
-      );
-    }
-
-    // Generate auth response for the channel
-    const authResponse = pusher.authorizeChannel(socket_id, channel_name, {
-      user_id: socket_id, // Use socket_id as user_id for uniqueness
-      user_info: {
-        name: 'User'
-      }
-    });
-
-    return NextResponse.json(authResponse);
-  } catch (error) {
-    console.error('Error authorizing channel:', error);
-    return NextResponse.json(
-      { error: 'Authorization failed' },
-      { status: 500 }
-    );
-  }
+export async function GET() {
+  return NextResponse.json({ status: 'ok' });
 }
 
 export const dynamic = 'force-dynamic';
