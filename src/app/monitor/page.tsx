@@ -71,7 +71,7 @@ export default function MonitorPage() {
 
     pusher.connection.bind('error', (err: any) => {
       console.error('Pusher error:', err);
-      setError(`Connection error: ${err.message}. Retrying...`);
+      setError(`Connection error: ${err.message || 'Unknown error'}. Retrying...`);
       setIsConnected(false);
       setIsReconnecting(true);
     });
@@ -94,7 +94,7 @@ export default function MonitorPage() {
 
     channel.bind('pusher:subscription_error', (err: any) => {
       console.error('Failed to subscribe to private-camera-feed channel:', err);
-      setError(`Failed to subscribe to camera feed: ${err.message}`);
+      setError(`Failed to subscribe to camera feed: ${err.message || 'Unknown error'}`);
     });
 
     return () => {
