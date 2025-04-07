@@ -187,8 +187,8 @@ export default function CameraPage() {
       console.log('Requesting camera access');
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 640 },
+          height: { ideal: 360 },
           facingMode: isMobile ? { ideal: 'environment' } : undefined
         }
       });
