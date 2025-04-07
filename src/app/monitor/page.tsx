@@ -32,6 +32,9 @@ export default function MonitorPage() {
       auth: {
         params: {
           user_id: 'monitor'
+        },
+        headers: {
+          'x-user-id': 'monitor'
         }
       },
       disableStats: true,

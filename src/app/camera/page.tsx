@@ -95,6 +95,9 @@ export default function CameraPage() {
       auth: {
         params: {
           user_id: 'camera'
+        },
+        headers: {
+          'x-user-id': 'camera'
         }
       },
       disableStats: true,
